@@ -8,7 +8,7 @@ show_banner() {
   echo " / ___ \| |___ ___) | |_| |___) / ___ \|  _ <_____| |_| | |___| |_) |_____/ ___ \ |_| | | || |_| |"
   echo "/_/   \_\_____|____/ \___/|____/_/   \_\_| \_\    |____/|_____|____/     /_/   \_\___/  |_| \___/ "
   echo ""
-  echo "         Debian Auto-Installer — Sudo, Cockpit, SSH & Tools"
+  echo "         Debian Auto-Installer — Sudo, SSH & Tools"
   echo ""
 }
 
@@ -31,7 +31,7 @@ fi
 
 SUDOERS_FILE="/etc/sudoers.d/${SUDO_USER_NAME}"
 NETWORKMANAGER_CONF="/etc/NetworkManager/NetworkManager.conf"
-PACKAGES=(sudo net-tools curl cockpit)
+PACKAGES=(sudo net-tools curl)
 
 configure_networkmanager_ifupdown() {
   if [[ ! -f "${NETWORKMANAGER_CONF}" ]]; then
@@ -117,9 +117,6 @@ if ! visudo -cf "${SUDOERS_FILE}"; then
 fi
 
 if command -v systemctl >/dev/null 2>&1; then
-  echo "Enabling Cockpit socket..."
-  systemctl enable --now cockpit.socket
-
   echo "Checking SSH server..."
   if ! dpkg -l openssh-server >/dev/null 2>&1; then
     echo "Installing openssh-server..."
@@ -133,13 +130,67 @@ if command -v systemctl >/dev/null 2>&1; then
   if systemctl cat NetworkManager.service >/dev/null 2>&1; then
     echo "Restarting NetworkManager..."
     systemctl restart NetworkManager
-    echo "Migrating connections to keyfile backend for Cockpit compatibility..."
-    nmcli con migrate 2>/dev/null || true
   else
     echo "NetworkManager service not found; config was updated but service was not restarted."
   fi
-else
-  echo "systemctl not found; Cockpit was installed but not enabled automatically."
+fi
+
+echo "Setting up IP address in login banner..."
+cat > /usr/local/bin/generate-issue.sh <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+IPS=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $2, $4}' | sed 's|/.*||') || true
+
+PRETTY_NAME="Debian GNU/Linux"
+if [[ -f /etc/os-release ]]; then
+  . /etc/os-release
+fi
+
+{
+  echo "${PRETTY_NAME} \n \l"
+  echo ""
+  if [[ -z "$IPS" ]]; then
+    echo "IP Address: (not connected)"
+  else
+    while IFS= read -r line; do
+      IFACE=$(echo "$line" | awk '{print $1}')
+      IP=$(echo "$line" | awk '{print $2}')
+      echo "IP Address: ${IP} (${IFACE})"
+    done <<< "$IPS"
+  fi
+  echo ""
+} > /etc/issue
+SCRIPT
+chmod +x /usr/local/bin/generate-issue.sh
+
+cat > /etc/systemd/system/generate-issue.service <<'UNIT'
+[Unit]
+Description=Generate /etc/issue with primary IP
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/generate-issue.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable generate-issue.service
+/usr/local/bin/generate-issue.sh
+
+if systemctl cat NetworkManager.service >/dev/null 2>&1; then
+  cat > /etc/NetworkManager/dispatcher.d/99-update-issue <<'DISP'
+#!/usr/bin/env bash
+if [[ "$2" =~ ^(up|vpn-up)$ ]]; then
+  /usr/local/bin/generate-issue.sh
+fi
+DISP
+  chmod +x /etc/NetworkManager/dispatcher.d/99-update-issue
 fi
 
 echo "Done."
@@ -147,3 +198,4 @@ echo "Installed: ${PACKAGES[*]}"
 echo "SSH server: enabled"
 echo "Sudo access configured for: ${SUDO_USER_NAME}"
 echo "NetworkManager ifupdown managed=true configured when available."
+echo "Login banner IP capture installed."

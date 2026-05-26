@@ -9,17 +9,18 @@
 
 # alsosram-deb-auto
 
-Debian setup script that auto-detects the first non-root user and configures sudo, Curl, Cockpit, and SSH.
+Debian setup script that auto-detects the first non-root user and configures sudo, curl, SSH, dynamically displays the IP address at the login prompt, and optionally enables NetworkManager ifupdown management.
 
-## What It Installs
+## What It Installs / Configures
 
-- `sudo`
+- `sudo` + sudoers rule for the detected user
 - `net-tools`
 - `curl`
-- `cockpit`
 - `openssh-server` (if not already present)
+- **IP login banner** — `/etc/issue` is auto-generated with the current primary IP address, updated at boot and on every network change
+- **NetworkManager** `managed=true` for ifupdown interfaces (when NM is present)
 
-It also creates a sudoers rule for the detected user (or the one passed as an argument):
+It creates a sudoers rule for the detected user (or the one passed as an argument):
 
 ```text
 <username> ALL=(ALL:ALL) ALL
@@ -27,14 +28,15 @@ It also creates a sudoers rule for the detected user (or the one passed as an ar
 
 The script writes this rule to `/etc/sudoers.d/<username>` and validates it with `visudo` instead of editing `/etc/sudoers` directly.
 
-It also configures NetworkManager so Cockpit can manage ifupdown interfaces by setting this in `/etc/NetworkManager/NetworkManager.conf`:
+It optionally sets `managed=true` in `/etc/NetworkManager/NetworkManager.conf` (backed up to `.bak`).
 
-```ini
-[ifupdown]
-managed=true
-```
+## IP Login Banner
 
-The original NetworkManager config is backed up to `/etc/NetworkManager/NetworkManager.conf.bak` before editing.
+Instead of Cockpit, the script installs a lightweight mechanism to show the server's IP address at the login prompt:
+
+- **`/usr/local/bin/generate-issue.sh`** — detects the default route interface and IP, writes `/etc/issue`
+- **`generate-issue.service`** — a systemd oneshot unit that runs after the network is online at boot
+- **`/etc/NetworkManager/dispatcher.d/99-update-issue`** — a NetworkManager dispatcher that re-generates `/etc/issue` whenever a connection comes up, keeping the login prompt current
 
 ## Usage
 
